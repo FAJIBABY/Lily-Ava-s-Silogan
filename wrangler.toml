@@ -1,0 +1,13 @@
+name = "lily-avas-silogan"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "lily-avas-orders"
+database_id = "PASTE-YOUR-DATABASE-ID-HERE"   # printed by: npx wrangler d1 create lily-avas-orders
