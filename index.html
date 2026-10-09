@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Orders Inbox · Lily Ava's Silogan</title>
+<style>
+  :root{--paper:#FFF7EA;--card:#fff;--panel:#FDE8CF;--ink:#2E1B12;--soft:#7A5C4B;--leaf:#D63A1F;--annatto:#D63A1F;--yolk:#F5B301;--ok:#2E7D3A;--line:rgba(46,27,18,.14);color-scheme:light;}
+  *{box-sizing:border-box} body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;}
+  header{position:sticky;top:0;z-index:5;background:var(--paper);border-bottom:1px solid var(--line);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  header h1{font-size:17px;margin:0;flex:1;min-width:150px;}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;padding:8px 12px;font-weight:600;}
+  button.primary{background:var(--leaf);border-color:var(--leaf);color:#fff;}
+  button.danger{color:var(--annatto);}
+  .tabs{display:flex;gap:6px;padding:12px 16px;overflow-x:auto;}
+  .tabs button{white-space:nowrap;} .tabs button.on{background:var(--ink);color:var(--paper);}
+  .count{display:inline-block;min-width:20px;padding:0 6px;border-radius:99px;background:var(--annatto);color:#fff;font-size:12px;margin-left:5px;text-align:center;}
+  main{padding:0 16px 40px;max-width:900px;margin:0 auto;display:grid;gap:12px;}
+  .order{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;}
+  .order.new{border-color:var(--annatto);box-shadow:0 0 0 2px rgba(193,68,14,.18);}
+  .row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap;}
+  .num{font-weight:800;font-size:17px;} .meta{color:var(--soft);font-size:13px;}
+  .pill{display:inline-block;border-radius:99px;padding:2px 10px;font-size:12px;font-weight:700;background:var(--panel);}
+  .pill.when{background:var(--yolk);color:#222;} .pill.st-new{background:var(--annatto);color:#fff;} .pill.st-preparing{background:#E7B93C;color:#222;} .pill.st-ready{background:var(--ok);color:#fff;}
+  ul{margin:8px 0;padding-left:18px;} .total{font-weight:800;}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  a.btn{display:inline-block;text-decoration:none;border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-weight:600;color:var(--ink);background:var(--card);}
+  .login{max-width:340px;margin:18vh auto;padding:0 16px;display:grid;gap:10px;}
+  .login input{font:inherit;padding:11px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);}
+  .empty{text-align:center;color:var(--soft);padding:50px 0;} #err{color:var(--annatto);font-size:13px;min-height:18px;}
+  @media print{header,.tabs,.actions{display:none} .order{break-inside:avoid;}}
+</style>
+</head>
+<body>
+<div id="loginView" class="login">
+  <h1>Orders Inbox</h1><div class="meta">Lily Ava's Silogan — staff only</div>
+  <input id="pw" type="password" placeholder="Admin password" autocomplete="current-password">
+  <button class="primary" id="loginBtn">Sign in</button><div id="err"></div>
+</div>
+
+<div id="appView" hidden>
+  <header>
+    <h1>📥 Orders Inbox</h1>
+    <button id="soundBtn" title="Play a sound when a new order arrives">🔔 Sound: off</button>
+    <button id="refreshBtn">↻ Refresh</button>
+    <button id="logoutBtn">Sign out</button>
+  </header>
+  <div class="tabs" id="tabs"></div>
+  <main id="list"></main>
+</div>
+
+<script>
+const TABS=[['active','Active'],['scheduled','Scheduled'],['done','Done'],['all','All']];
+let key=sessionStorage.getItem('adminKey')||'', orders=[], tab='active', sound=false, knownNew=new Set(), first=true, timer;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const peso=n=>'₱'+Number(n).toLocaleString('en-PH');
+const manilaToday=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'});
+
+function beep(){ try{ const a=new (window.AudioContext||window.webkitAudioContext)(); [0,.25].forEach(t=>{const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=880;g.gain.value=.2;o.start(a.currentTime+t);o.stop(a.currentTime+t+.18);}); }catch(e){} }
+
+async function api(method,body){
+  const r=await fetch('/api/admin/orders',{method,headers:{'x-admin-key':key,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  if(r.status===401){ logout(true); throw new Error('auth'); }
+  return r.json();
+}
+async function load(){
+  try{
+    const d=await api('GET'); if(!d.ok) return; orders=d.orders;
+    const newIds=orders.filter(o=>o.status==='new').map(o=>o.id);
+    if(!first && newIds.some(id=>!knownNew.has(id))){ if(sound) beep(); document.title='🔴 New order! · Orders Inbox'; }
+    knownNew=new Set(newIds); first=false; render();
+  }catch(e){}
+}
+function isScheduledFuture(o){ return o.scheduled_for && o.scheduled_for.slice(0,10)>manilaToday() && ['new','preparing','ready'].includes(o.status); }
+function filtered(){
+  const live=o=>['new','preparing','ready'].includes(o.status);
+  if(tab==='active') return orders.filter(o=>live(o)&&!isScheduledFuture(o));
+  if(tab==='scheduled') return orders.filter(isScheduledFuture).sort((a,b)=>a.scheduled_for.localeCompare(b.scheduled_for));
+  if(tab==='done') return orders.filter(o=>o.status==='completed'||o.status==='cancelled');
+  return orders;
+}
+function fmtCreated(s){ return new Date(s.replace(' ','T')+'Z').toLocaleString('en-PH',{timeZone:'Asia/Manila',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }
+function render(){
+  $('tabs').innerHTML=TABS.map(([id,l])=>{ const n=id==='active'?orders.filter(o=>o.status==='new').length:0;
+    return `<button data-tab="${id}" class="${id===tab?'on':''}">${l}${n?`<span class="count">${n}</span>`:''}</button>`}).join('');
+  const list=filtered();
+  $('list').innerHTML=list.length?list.map(card).join(''):'<div class="empty">No orders here.</div>';
+}
+function card(o){
+  const num='LA-'+String(o.id).padStart(4,'0');
+  const phone=o.phone.replace(/[^0-9+]/g,''); const wa=phone.replace(/^\+/,'').replace(/^0/,'63');
+  const next={new:['preparing','✅ Accept & start preparing'],preparing:['ready',o.order_type==='Delivery'?'🛵 Out for delivery / ready':'🍽️ Ready for pickup'],ready:['completed','✔ Mark completed']}[o.status];
+  return `<article class="order ${o.status}">
+    <div class="row"><div><span class="num">${num}</span> <span class="pill st-${esc(o.status)}">${esc(o.status)}</span></div>
+      <div class="meta">${fmtCreated(o.created_at)}</div></div>
+    <div style="margin:6px 0"><span class="pill when">${o.scheduled_label?'📅 '+esc(o.scheduled_label):'⚡ ASAP'}</span> <span class="pill">${esc(o.order_type)}</span> <span class="pill">${o.pay_method==='gcash'?'GCash':'Cash'}</span></div>
+    <div><b>${esc(o.name)}</b> · <a href="tel:${esc(phone)}">${esc(o.phone)}</a></div>
+    ${o.order_type==='Delivery'?`<div class="meta">📍 ${esc(o.address)} — ${esc(o.area)}</div>`:''}
+    <ul>${o.items.map(i=>`<li>${esc(i.name)} ×${i.qty} — ${peso(i.price*i.qty)}</li>`).join('')}</ul>
+    ${o.notes?`<div>📝 ${esc(o.notes)}</div>`:''}
+    ${o.gcash_ref?`<div>GCash ref: <b>${esc(o.gcash_ref)}</b></div>`:''}
+    <div class="total">Total ${peso(o.total)} <span class="meta">${o.delivery_fee?`(incl. ${peso(o.delivery_fee)} delivery)`:o.order_type==='Delivery'?'(free delivery)':''}</span></div>
+    <div class="actions">
+      ${next?`<button class="primary" data-act="${o.id}|${next[0]}">${next[1]}</button>`:''}
+      <a class="btn" href="https://wa.me/${esc(wa)}" target="_blank" rel="noopener">WhatsApp</a>
+      <a class="btn" href="tel:${esc(phone)}">Call</a>
+      ${['new','preparing','ready'].includes(o.status)?`<button class="danger" data-act="${o.id}|cancelled">Cancel</button>`:`<button data-act="${o.id}|new">Reopen</button>`}
+      <button data-print="1">Print</button>
+    </div></article>`;
+}
+document.addEventListener('click',async e=>{
+  const t=e.target.closest('[data-tab]'); if(t){ tab=t.dataset.tab; render(); return; }
+  const a=e.target.closest('[data-act]');
+  if(a){ const [id,status]=a.dataset.act.split('|');
+    if(status==='cancelled' && !confirm('Cancel this order?')) return;
+    a.disabled=true; await api('PATCH',{id:Number(id),status}); document.title="Orders Inbox · Lily Ava's Silogan"; load(); return; }
+  const p=e.target.closest('[data-print]'); if(p){ const art=p.closest('article'); document.querySelectorAll('.order').forEach(x=>{ if(x!==art) x.style.display='none'; }); window.print(); document.querySelectorAll('.order').forEach(x=>x.style.display=''); }
+});
+$('refreshBtn').onclick=load;
+$('soundBtn').onclick=()=>{ sound=!sound; $('soundBtn').textContent='🔔 Sound: '+(sound?'on':'off'); if(sound) beep(); };
+function logout(msg){ sessionStorage.removeItem('adminKey'); key=''; clearInterval(timer); $('appView').hidden=true; $('loginView').hidden=false; $('err').textContent=msg===true?'Wrong or expired password.':''; }
+$('logoutBtn').onclick=()=>logout();
+async function start(){ $('loginView').hidden=true; $('appView').hidden=false; await load(); timer=setInterval(load,15000); }
+$('loginBtn').onclick=async()=>{
+  key=$('pw').value; if(!key) return;
+  const r=await fetch('/api/admin/orders',{headers:{'x-admin-key':key}});
+  if(r.ok){ sessionStorage.setItem('adminKey',key); start(); } else $('err').textContent=r.status===401?'Wrong password.':'Server problem — is the database set up? (see README)';
+};
+$('pw').addEventListener('keydown',e=>{ if(e.key==='Enter') $('loginBtn').click(); });
+if(key){ fetch('/api/admin/orders',{headers:{'x-admin-key':key}}).then(r=>r.ok?start():logout()); }
+</script>
+</body>
+</html>
